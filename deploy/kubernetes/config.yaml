@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: brscanr
+data:
+  BRSCANR_PRINTER_IP: "192.0.2.10"
+  BRSCANR_CALLBACK: "198.51.100.50:54925"
+  BRSCANR_DESTINATION: "Paperless"
+  BRSCANR_BUTTON_SOURCE: "feeder"
+  BRSCANR_INSECURE_PRINTER_TLS: "true"
+  BRSCANR_PAPERLESS_URL: "http://paperless.default.svc.cluster.local:8000/"
+  BRSCANR_PAPERLESS_TOKEN_FILE: "/var/run/secrets/paperless/token"
+  BRSCANR_SPOOL: "/var/lib/brscanr"
