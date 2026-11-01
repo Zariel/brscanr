@@ -21,21 +21,13 @@
         };
       in {
         default = app;
-        image = pkgs.dockerTools.buildLayeredImage {
-          name = "brscanr";
-          tag = "0.1.0";
-          contents = [ app pkgs.cacert ];
-          config = {
-            Entrypoint = [ "${app}/bin/brscanr" ];
-            User = "10001:10001";
-            Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
-            ExposedPorts = { "8080/tcp" = {}; "54925/udp" = {}; };
-          };
-        };
       });
       devShells = eachSystem (system: let pkgs = import nixpkgs { inherit system; }; in {
+        release = pkgs.mkShell {
+          packages = with pkgs; [ kubernetes-helm (python3.withPackages (p: [ p.pyyaml ])) ];
+        };
         default = pkgs.mkShell {
-          packages = with pkgs; [ cargo rustc rustfmt clippy pkg-config curl jq (python3.withPackages (p: [ p.pillow ])) openssl poppler-utils kubectl kubeconform ];
+          packages = with pkgs; [ cargo rustc rustfmt clippy pkg-config curl jq (python3.withPackages (p: [ p.pillow p.pyyaml ])) openssl poppler-utils kubectl kubeconform kubernetes-helm actionlint hadolint docker-client docker-buildx skopeo yq-go ];
           shellHook = ''
             export CARGO_HOME="$PWD/.cache/cargo"
           '';
