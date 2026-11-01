@@ -119,6 +119,9 @@ class PaperlessRequest(http.server.BaseHTTPRequestHandler):
         self.respond(self.server.task_id)
 
     def do_GET(self):
+        if self.path == "/api/documents/42/":
+            self.respond({"id": 42})
+            return
         assert self.path == f"/api/tasks/?task_id={self.server.task_id}"
         self.respond([] if self.server.missing else [{
             "task_id": self.server.task_id, "status": "SUCCESS", "related_document": 42,
@@ -204,12 +207,14 @@ def main():
         def scan(source="feeder", key=None):
             return request("/api/scans", {"source": source, "idempotency_key": key or str(uuid.uuid4())})
 
-        def action(path, confirm=False, valid_csrf=True):
+        def action(path, confirm=False, valid_csrf=True, document=None):
             html = request("/")[1].decode()
             csrf = re.search(r'name="csrf" value="([^"]+)"', html)[1]
             data = {"csrf": csrf if valid_csrf else "expired"}
             if confirm:
                 data["confirm"] = "yes"
+            if document is not None:
+                data["document_id"] = str(document)
             req = urllib.request.Request(base + path, data=urllib.parse.urlencode(data).encode())
             try:
                 with urllib.request.urlopen(req, timeout=5) as response:
@@ -279,6 +284,10 @@ def main():
                 paperless.release.set()
                 start()
                 assert job(crash_upload["id"])["state"] == "unknown"
+                assert action(f'/jobs/{crash_upload["id"]}/resolve', document=42) == 400
+                assert action(f'/jobs/{crash_upload["id"]}/resolve', confirm=True, document=42) == 200
+                assert job(crash_upload["id"])["state"] == "imported"
+                assert len(paperless.uploads) == 3
                 # An interrupted acquisition is never resumed, and blocks future paper movement.
                 printer.release.clear()
                 third = scan()[1]

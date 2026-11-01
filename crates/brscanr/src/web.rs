@@ -25,6 +25,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/jobs/{id}", get(job_page))
         .route("/jobs/{id}/document.pdf", get(download))
         .route("/jobs/{id}/retry", post(retry))
+        .route("/jobs/{id}/resolve", post(resolve))
         .route("/api/scans", post(scan_api))
         .route("/api/jobs", get(jobs))
         .route("/api/jobs/{id}", get(job_api))
@@ -70,6 +71,7 @@ struct Action {
     csrf: String,
     #[serde(default)]
     confirm: Option<String>,
+    document_id: Option<i64>,
 }
 
 fn check_csrf(app: &App, token: &str) -> WebResult<()> {
@@ -128,6 +130,30 @@ async fn retry(
 }
 async fn jobs(State(app): State<Arc<App>>) -> WebResult<Json<Vec<Job>>> {
     Ok(Json(app.store.recent().await?))
+}
+
+async fn resolve(
+    State(app): State<Arc<App>>,
+    Path(id): Path<Uuid>,
+    Form(form): Form<Action>,
+) -> WebResult<Redirect> {
+    check_csrf(&app, &form.csrf)?;
+    if form.confirm.as_deref() != Some("yes") {
+        return Err(WebError(
+            StatusCode::BAD_REQUEST,
+            "Confirm that the existing document matches this scan".into(),
+        ));
+    }
+    let document = form.document_id.ok_or_else(|| {
+        WebError(
+            StatusCode::BAD_REQUEST,
+            "Enter the existing Paperless document ID".into(),
+        )
+    })?;
+    app.reconcile(&id.to_string(), document)
+        .await
+        .map_err(|e| WebError(StatusCode::CONFLICT, e.to_string()))?;
+    Ok(Redirect::to(&format!("/jobs/{id}")))
 }
 async fn job_api(State(app): State<Arc<App>>, Path(id): Path<Uuid>) -> WebResult<Json<Job>> {
     Ok(Json(find_job(&app, id).await?))
@@ -298,6 +324,9 @@ async fn job_page(State(app): State<Arc<App>>, Path(id): Path<Uuid>) -> WebResul
             ""
         };
         body.push_str(&format!("<form method=\"post\" action=\"/jobs/{id}/retry\"><input type=\"hidden\" name=\"csrf\" value=\"{}\">{confirm}<button>Retry delivery</button></form>", app.csrf));
+    }
+    if job.state == "unknown" {
+        body.push_str(&format!("<h3>Found this scan in Paperless?</h3><form method=\"post\" action=\"/jobs/{id}/resolve\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><p><label>Existing Paperless document ID <input type=\"number\" name=\"document_id\" min=\"1\" required></label></p><p><label><input type=\"checkbox\" name=\"confirm\" value=\"yes\" required>I verified that this Paperless document contains this scan.</label></p><button>Record existing import</button></form>", app.csrf));
     }
     body.push_str("<p><a href=\"/\">Start a new scan or check scanner status</a></p>");
     Ok(page("Scan details — brscanr", body))

@@ -125,6 +125,29 @@ impl App {
         self.stop.cancel();
     }
 
+    pub async fn reconcile(&self, id: &str, document: i64) -> Result<()> {
+        let _guard = self.delivery.lock().await;
+        let job = self
+            .store
+            .job(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Job not found"))?;
+        if job.state != "unknown" {
+            bail!("Only unknown outcomes can be reconciled");
+        }
+        self.paperless.verify_document(document).await?;
+        // The operator identifies the matching scan; existence alone does not establish identity.
+        self.store
+            .transition(id, "imported", None, None, Some(document))
+            .await?;
+        tracing::info!(
+            job_id = id,
+            document_id = document,
+            "operator reconciled existing Paperless import"
+        );
+        Ok(())
+    }
+
     pub async fn storage(&self) -> Result<u64> {
         let root = self.config.spool.clone();
         let (used, free) = tokio::task::spawn_blocking(move || -> Result<_> {

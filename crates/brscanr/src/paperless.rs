@@ -139,6 +139,23 @@ impl Paperless {
             _ => bail!("unrecognized Paperless task status"),
         }
     }
+
+    pub async fn verify_document(&self, id: i64) -> Result<()> {
+        if id <= 0 {
+            bail!("document ID must be positive");
+        }
+        let response = self
+            .client
+            .get(self.base.join(&format!("api/documents/{id}/"))?)
+            .send()
+            .await?
+            .error_for_status()?;
+        let document: serde_json::Value = serde_json::from_slice(&bounded_body(response).await?)?;
+        if document["id"].as_i64() != Some(id) {
+            bail!("Paperless did not confirm the document ID");
+        }
+        Ok(())
+    }
 }
 
 async fn bounded_body(mut response: reqwest::Response) -> Result<Vec<u8>> {
