@@ -43,7 +43,7 @@ def main():
     container = pod["containers"][0]
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
     assert container["readinessProbe"]["httpGet"]["path"] == "/readyz"
-    assert container["image"] == "ghcr.io/zariel/brscanr:v0.1.0"
+    assert container["image"] == "ghcr.io/zariel/brscanr:v0.1.1"
     secret = container["env"][0]["valueFrom"]["secretKeyRef"]
     assert secret == {"name": "brscanr-paperless", "key": "token"}
     assert "BRSCANR_PAPERLESS_TOKEN" not in kind(documents, "ConfigMap")["data"]

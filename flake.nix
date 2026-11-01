@@ -10,7 +10,7 @@
         pkgs = import nixpkgs { inherit system; };
         app = pkgs.rustPlatform.buildRustPackage {
           pname = "brscanr";
-          version = "0.1.0";
+          version = "0.1.1";
           src = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [ ./Cargo.toml ./Cargo.lock ./crates ];
