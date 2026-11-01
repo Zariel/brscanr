@@ -117,6 +117,35 @@ async fn feeder_pdf() {
 }
 
 #[tokio::test]
+async fn rgb_pdf() {
+    let mut jpeg = Vec::new();
+    jpeg_encoder::Encoder::new(&mut jpeg, 90)
+        .encode(&[100; 96], 8, 4, jpeg_encoder::ColorType::Rgb)
+        .unwrap();
+    let mut bytes = record(1, &jpeg, 4);
+    bytes.extend([0, 0x21, 1, 0, 0, 0x20]);
+    let directory = tempfile::tempdir().unwrap();
+    let capture = scan(bytes, Source::Platen, directory.path()).await.unwrap();
+    let pdf = directory.path().join("rgb.pdf");
+    assemble_pdf(&capture, &pdf).unwrap();
+
+    let parsed = lopdf::Document::load(pdf).unwrap();
+    let image = parsed
+        .objects
+        .values()
+        .filter_map(|o| o.as_stream().ok())
+        .find(|s| {
+            s.dict.get(b"Subtype").and_then(|v| v.as_name()).ok() == Some(b"Image".as_slice())
+        })
+        .unwrap();
+    assert_eq!(
+        image.dict.get(b"ColorSpace").unwrap().as_name().unwrap(),
+        b"DeviceRGB"
+    );
+    assert_eq!(image.content, jpeg);
+}
+
+#[tokio::test]
 async fn incomplete_jobs() {
     let jpg = jpeg();
     let mut ended_page = record(1, &jpg, 4);

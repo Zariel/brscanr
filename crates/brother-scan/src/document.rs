@@ -28,7 +28,13 @@ pub fn assemble_pdf(capture: &Capture, destination: &Path) -> Result<()> {
         let info = decoder
             .info()
             .ok_or_else(|| protocol("missing JPEG dimensions"))?;
-        if info.pixel_format != jpeg_decoder::PixelFormat::L8 || info.height as u32 != page.lines {
+        if ![
+            jpeg_decoder::PixelFormat::L8,
+            jpeg_decoder::PixelFormat::RGB24,
+        ]
+        .contains(&info.pixel_format)
+            || info.height as u32 != page.lines
+        {
             return Err(protocol("unexpected JPEG color space or height"));
         }
         let width = f32::from(info.width) * 72.0 / f32::from(capture.dpi);
@@ -51,7 +57,16 @@ pub fn assemble_pdf(capture: &Capture, destination: &Path) -> Result<()> {
         image
             .width(i32::from(info.width))
             .height(i32::from(info.height));
-        image.color_space().device_gray();
+        // CLR describes the request; the device can still emit a three-component JPEG.
+        match info.pixel_format {
+            jpeg_decoder::PixelFormat::L8 => {
+                image.color_space().device_gray();
+            }
+            jpeg_decoder::PixelFormat::RGB24 => {
+                image.color_space().device_rgb();
+            }
+            _ => unreachable!(),
+        }
         image.bits_per_component(8);
         drop(image);
         let mut content = Content::new();

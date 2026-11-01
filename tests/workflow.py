@@ -10,6 +10,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import socketserver
@@ -21,6 +22,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 import uuid
 
 from PIL import Image
@@ -72,7 +74,8 @@ class Acquisition(socketserver.BaseRequestHandler):
             self.server.release.wait(30)
             for page in range(1, 4 if b"PSRC=ADF\n" in settings else 2):
                 output = io.BytesIO()
-                Image.new("L", (64, 32), page * 50).save(output, format="JPEG")
+                # Real devices can emit RGB JPEGs despite the GRAY256 request.
+                Image.new("RGB", (64, 32), (page * 50,) * 3).save(output, format="JPEG")
                 jpeg = bytearray(output.getvalue())
                 sof = jpeg.index(b"\xff\xc0")
                 jpeg[sof + 5:sof + 7] = (48).to_bytes(2, "big")
@@ -93,6 +96,8 @@ class Paperless(http.server.ThreadingHTTPServer):
         self.ambiguous = False
         self.missing = False
         self.task_id = str(uuid.uuid4())
+        self.release = threading.Event()
+        self.release.set()
 
 
 class PaperlessRequest(http.server.BaseHTTPRequestHandler):
@@ -106,6 +111,7 @@ class PaperlessRequest(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers["Content-Length"]))
         assert b'name="document"' in body and b"%PDF-" in body
         self.server.uploads.append(body)
+        self.server.release.wait(30)
         if self.server.ambiguous:
             self.connection.shutdown(socket.SHUT_RDWR)
             self.connection.close()
@@ -124,7 +130,10 @@ class PaperlessRequest(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Expected when the service is killed after upload acceptance.
 
 
 @contextlib.contextmanager
@@ -170,7 +179,7 @@ def main():
 
         def start():
             nonlocal process
-            process = subprocess.Popen(["target/debug/brscanr"], env=env, stdout=log, stderr=log)
+            process = subprocess.Popen([os.environ.get("BRSCANR_TEST_BINARY", "target/debug/brscanr")], env=env, stdout=log, stderr=log)
 
             def ready():
                 assert process.poll() is None, (root / "service.log").read_text()
@@ -194,6 +203,19 @@ def main():
 
         def scan(source="feeder", key=None):
             return request("/api/scans", {"source": source, "idempotency_key": key or str(uuid.uuid4())})
+
+        def action(path, confirm=False, valid_csrf=True):
+            html = request("/")[1].decode()
+            csrf = re.search(r'name="csrf" value="([^"]+)"', html)[1]
+            data = {"csrf": csrf if valid_csrf else "expired"}
+            if confirm:
+                data["confirm"] = "yes"
+            req = urllib.request.Request(base + path, data=urllib.parse.urlencode(data).encode())
+            try:
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    return response.status
+            except urllib.error.HTTPError as error:
+                return error.code
 
         def button(seq):
             text = f'TYPE=BR;BUTTON=SCAN;USER="BrscanrTest";FUNC=FILE;HOST=127.0.0.1:{udp_port};APPNUM=5;REGID=100;SEQ={seq};'
@@ -248,10 +270,19 @@ def main():
                 assert job(second["id"])["state"] == "unknown"
                 assert len(paperless.uploads) == 2
                 assert printer.connections == 2
+                paperless.ambiguous = False
+                paperless.release.clear()
+                crash_upload = scan("platen")[1]
+                eventually(lambda: len(paperless.uploads) == 3)
+                assert job(crash_upload["id"])["state"] == "uploading"
+                stop(crash=True)
+                paperless.release.set()
+                start()
+                assert job(crash_upload["id"])["state"] == "unknown"
                 # An interrupted acquisition is never resumed, and blocks future paper movement.
                 printer.release.clear()
                 third = scan()[1]
-                eventually(lambda: printer.connections == 3)
+                eventually(lambda: printer.connections == 4)
                 stop(crash=True)
                 printer.release.set()
                 start()
@@ -261,7 +292,26 @@ def main():
                 # Independently inspect durable state, rather than accepting HTTP status alone.
                 with sqlite3.connect(root / "spool" / "jobs.sqlite") as database:
                     assert database.execute("SELECT state FROM jobs WHERE id=?", (second["id"],)).fetchone() == ("unknown",)
-                    assert database.execute("SELECT count(*) FROM jobs").fetchone() == (3,)
+                    assert database.execute("SELECT count(*) FROM jobs").fetchone() == (4,)
+                assert action("/scanner/acknowledge", valid_csrf=False) == 403
+                assert action("/scanner/acknowledge") == 200
+                assert not request("/api/status")[1]["scanner_uncertain"]
+                assert action(f'/jobs/{second["id"]}/retry') == 409
+                assert action(f'/jobs/{second["id"]}/retry', confirm=True) == 200
+                wait_state(second["id"], "imported")
+                assert len(paperless.uploads) == 4
+                assert printer.connections == 4  # Delivery retry must not move paper.
+                button(2)
+                def button_job():
+                    return next((j for j in request("/api/jobs")[1] if j["trigger"] == "button"), None)
+                physical = eventually(button_job)
+                wait_state(physical["id"], "imported")
+                assert printer.connections == 5
+                stop()
+                env["BRSCANR_MAX_SPOOL_BYTES"] = "0"
+                start()
+                assert scan()[0] == 409
+                assert printer.connections == 5
                 metrics = request("/metrics")[1].decode()
                 assert "process_open_fds" in metrics
                 assert "brscanr_undelivered_jobs" in metrics
