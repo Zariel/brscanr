@@ -55,6 +55,8 @@ impl Store {
             .create_if_missing(true)
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Full)
+            // The container root is read-only. Bounded queries keep scratch data in memory.
+            .pragma("temp_store", "MEMORY")
             .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -66,6 +68,7 @@ impl Store {
           sha256 TEXT, error TEXT, task_id TEXT, document_id INTEGER,
           attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0);
           CREATE UNIQUE INDEX IF NOT EXISTS one_capture ON jobs(state) WHERE state='acquiring';
+          CREATE INDEX IF NOT EXISTS delivery_jobs ON jobs(state, next_attempt, created);
           CREATE TABLE IF NOT EXISTS requests (key TEXT PRIMARY KEY, source TEXT NOT NULL, created INTEGER NOT NULL, job_id TEXT, rejection TEXT);
           CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
           INSERT OR IGNORE INTO settings VALUES ('uncertain', '0');")
@@ -214,7 +217,7 @@ impl Store {
         )
     }
     pub async fn pending(&self) -> Result<Vec<Job>> {
-        Ok(sqlx::query_as("SELECT * FROM jobs WHERE state IN ('captured','ready','submitted') AND next_attempt<=? ORDER BY created").bind(now()).fetch_all(&self.pool).await?)
+        Ok(sqlx::query_as("SELECT * FROM jobs WHERE state IN ('captured','ready','submitted') AND next_attempt<=? ORDER BY created LIMIT 100").bind(now()).fetch_all(&self.pool).await?)
     }
     pub async fn uncertain(&self) -> Result<bool> {
         Ok(
@@ -298,7 +301,7 @@ impl Store {
     }
     pub async fn expired(&self, before: i64) -> Result<Vec<Job>> {
         Ok(
-            sqlx::query_as("SELECT * FROM jobs WHERE state='imported' AND updated < ?")
+            sqlx::query_as("SELECT * FROM jobs WHERE state='imported' AND updated < ? LIMIT 100")
                 .bind(before)
                 .fetch_all(&self.pool)
                 .await?,
