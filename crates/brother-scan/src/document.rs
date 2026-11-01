@@ -19,8 +19,9 @@ pub fn assemble_pdf(capture: &Capture, destination: &Path) -> Result<()> {
         .count(capture.pages.len() as i32);
     for (index, page) in capture.pages.iter().enumerate() {
         let mut jpeg = std::fs::read(&page.file)?;
-        correct_height(&mut jpeg, page.lines)?;
-        let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(&jpeg));
+        let normalized_height = normalize_height(&mut jpeg, page.lines)?;
+        let mut encoded = Cursor::new(&jpeg);
+        let mut decoder = jpeg_decoder::Decoder::new(&mut encoded);
         decoder.set_max_decoding_buffer_size(32 * 1024 * 1024);
         decoder
             .decode()
@@ -28,12 +29,16 @@ pub fn assemble_pdf(capture: &Capture, destination: &Path) -> Result<()> {
         let info = decoder
             .info()
             .ok_or_else(|| protocol("missing JPEG dimensions"))?;
+        drop(decoder);
+        if encoded.position() != jpeg.len() as u64 {
+            return Err(protocol("trailing data after JPEG image"));
+        }
         if ![
             jpeg_decoder::PixelFormat::L8,
             jpeg_decoder::PixelFormat::RGB24,
         ]
         .contains(&info.pixel_format)
-            || info.height as u32 != page.lines
+            || info.height != normalized_height
         {
             return Err(protocol("unexpected JPEG color space or height"));
         }
@@ -87,7 +92,7 @@ pub fn assemble_pdf(capture: &Capture, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn correct_height(data: &mut [u8], lines: u32) -> Result<()> {
+fn normalize_height(data: &mut [u8], lines: u32) -> Result<u16> {
     if !data.starts_with(&[0xff, 0xd8]) || !data.ends_with(&[0xff, 0xd9]) {
         return Err(protocol("incomplete JPEG"));
     }
@@ -96,7 +101,20 @@ fn correct_height(data: &mut [u8], lines: u32) -> Result<()> {
         if data[position] != 0xff {
             return Err(protocol("invalid JPEG marker"));
         }
+        // JPEG permits repeated FF fill bytes before a marker.
+        while data.get(position + 1) == Some(&0xff) {
+            position += 1;
+        }
+        if position + 4 > data.len() {
+            return Err(protocol("missing JPEG frame"));
+        }
         let marker = data[position + 1];
+        if marker == 0x00 {
+            return Err(protocol("stuffed JPEG byte before scan"));
+        }
+        if [0xda, 0xd9].contains(&marker) {
+            return Err(protocol("JPEG scan or end precedes frame"));
+        }
         let length = usize::from(u16::from_be_bytes([data[position + 2], data[position + 3]]));
         if length < 2 || position + 2 + length > data.len() {
             return Err(protocol("invalid JPEG segment"));
@@ -105,19 +123,22 @@ fn correct_height(data: &mut [u8], lines: u32) -> Result<()> {
             if length < 8 {
                 return Err(protocol("short JPEG frame"));
             }
-            let height = u16::from_be_bytes([data[position + 5], data[position + 6]]);
+            let frame_height = u16::from_be_bytes([data[position + 5], data[position + 6]]);
             let width = u16::from_be_bytes([data[position + 7], data[position + 8]]);
-            if lines == 0 || lines > u32::from(height) || lines > 6000 || width == 0 || width > 4096
+            let height = lines.min(u32::from(frame_height));
+            if height == 0
+                || lines > u32::from(frame_height) + 1
+                || height > 6000
+                || width == 0
+                || width > 4096
             {
                 return Err(protocol("JPEG dimensions outside supported bounds"));
             }
-            // The device reports cumulative acquired lines in the final image record.
-            // Alter metadata only: compressed samples, including width padding, stay intact.
-            data[position + 5..position + 7].copy_from_slice(&(lines as u16).to_be_bytes());
-            return Ok(());
-        }
-        if marker == 0xda {
-            return Err(protocol("JPEG scan precedes frame"));
+            // The platen counter can include one line beyond the encoded frame.
+            // Never enlarge it; feeder corrections alter only the height metadata.
+            let height = height as u16;
+            data[position + 5..position + 7].copy_from_slice(&height.to_be_bytes());
+            return Ok(height);
         }
         position += 2 + length;
     }

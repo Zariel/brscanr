@@ -78,8 +78,12 @@ class Acquisition(socketserver.BaseRequestHandler):
                 Image.new("RGB", (64, 32), (page * 50,) * 3).save(output, format="JPEG")
                 jpeg = bytearray(output.getvalue())
                 sof = jpeg.index(b"\xff\xc0")
-                jpeg[sof + 5:sof + 7] = (48).to_bytes(2, "big")
-                record = b"\0\x02" + struct.pack("<HHII", page, 17, len(jpeg), 32) + jpeg
+                if b"PSRC=ADF\n" in settings:
+                    jpeg[sof + 5:sof + 7] = (48).to_bytes(2, "big")
+                    lines = 32
+                else:
+                    lines = 33
+                record = b"\0\x02" + struct.pack("<HHII", page, 17, len(jpeg), lines) + jpeg
                 self.request.sendall(record[:7])
                 self.request.sendall(record[7:] + b"\0\x21" + struct.pack("<H", page))
             self.request.sendall(b"\0\x20")

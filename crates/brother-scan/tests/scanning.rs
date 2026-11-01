@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, path::Path, time::Duration};
 
-use brother_scan::{Error, Limits, Notification, Scanner, Source, assemble_pdf};
+use brother_scan::{Capture, Error, Limits, Notification, Page, Scanner, Source, assemble_pdf};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -12,6 +12,44 @@ fn jpeg() -> Vec<u8> {
         .encode(&[100; 32], 8, 4, jpeg_encoder::ColorType::Luma)
         .unwrap();
     bytes
+}
+
+fn rgb_jpeg(width: u16, height: u16) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    jpeg_encoder::Encoder::new(&mut bytes, 90)
+        .encode(
+            &vec![100; usize::from(width) * usize::from(height) * 3],
+            width,
+            height,
+            jpeg_encoder::ColorType::Rgb,
+        )
+        .unwrap();
+    bytes
+}
+
+fn page_capture(directory: &Path, bytes: &[u8], lines: u32, source: Source) -> Capture {
+    let file = directory.join("page.jpg");
+    std::fs::write(&file, bytes).unwrap();
+    Capture {
+        source,
+        dpi: 300,
+        pages: vec![Page { file, lines }],
+    }
+}
+
+fn pdf_image(path: &Path) -> lopdf::Stream {
+    let pdf = lopdf::Document::load(path).unwrap();
+    assert_eq!(pdf.get_pages().len(), 1);
+    let images: Vec<_> = pdf
+        .objects
+        .values()
+        .filter_map(|o| o.as_stream().ok())
+        .filter(|s| {
+            s.dict.get(b"Subtype").and_then(|v| v.as_name()).ok() == Some(b"Image".as_slice())
+        })
+        .collect();
+    assert_eq!(images.len(), 1);
+    images[0].clone()
 }
 
 fn record(page: u16, jpeg: &[u8], lines: u32) -> Vec<u8> {
@@ -118,10 +156,7 @@ async fn feeder_pdf() {
 
 #[tokio::test]
 async fn rgb_pdf() {
-    let mut jpeg = Vec::new();
-    jpeg_encoder::Encoder::new(&mut jpeg, 90)
-        .encode(&[100; 96], 8, 4, jpeg_encoder::ColorType::Rgb)
-        .unwrap();
+    let jpeg = rgb_jpeg(8, 4);
     let mut bytes = record(1, &jpeg, 4);
     bytes.extend([0, 0x21, 1, 0, 0, 0x20]);
     let directory = tempfile::tempdir().unwrap();
@@ -129,20 +164,115 @@ async fn rgb_pdf() {
     let pdf = directory.path().join("rgb.pdf");
     assemble_pdf(&capture, &pdf).unwrap();
 
-    let parsed = lopdf::Document::load(pdf).unwrap();
-    let image = parsed
-        .objects
-        .values()
-        .filter_map(|o| o.as_stream().ok())
-        .find(|s| {
-            s.dict.get(b"Subtype").and_then(|v| v.as_name()).ok() == Some(b"Image".as_slice())
-        })
-        .unwrap();
+    let image = pdf_image(&pdf);
     assert_eq!(
         image.dict.get(b"ColorSpace").unwrap().as_name().unwrap(),
         b"DeviceRGB"
     );
     assert_eq!(image.content, jpeg);
+}
+
+#[test]
+fn height_overrun() {
+    for (source, original) in [
+        (Source::Platen, jpeg()),
+        (Source::Platen, rgb_jpeg(8, 4)),
+        (Source::Feeder, rgb_jpeg(8, 4)),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let capture = page_capture(directory.path(), &original, 5, source);
+        let pdf = directory.path().join("document.pdf");
+        assemble_pdf(&capture, &pdf).unwrap();
+
+        let image = pdf_image(&pdf);
+        assert_eq!(image.dict.get(b"Height").unwrap().as_i64().unwrap(), 4);
+        assert_eq!(image.content, original);
+    }
+}
+
+#[test]
+fn trailing_data() {
+    for suffix in [jpeg(), vec![0, 0, 0xff, 0xd9]] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut bytes = jpeg();
+        bytes.extend(suffix);
+        let capture = page_capture(directory.path(), &bytes, 4, Source::Feeder);
+        let pdf = directory.path().join("document.pdf");
+        assert!(assemble_pdf(&capture, &pdf).is_err());
+        assert!(!pdf.exists());
+    }
+}
+
+#[test]
+fn normalized_height_limit() {
+    let jpeg = rgb_jpeg(8, 6000);
+    let directory = tempfile::tempdir().unwrap();
+    let capture = page_capture(directory.path(), &jpeg, 6001, Source::Platen);
+    let pdf = directory.path().join("document.pdf");
+    assemble_pdf(&capture, &pdf).unwrap();
+
+    let image = pdf_image(&pdf);
+    assert_eq!(image.dict.get(b"Height").unwrap().as_i64().unwrap(), 6000);
+    assert_eq!(image.content, jpeg);
+}
+
+#[test]
+fn invalid_dimensions() {
+    for (height, width, lines) in [
+        (4u16, 8u16, 6),
+        (4, 8, 0),
+        (4, 8, u32::MAX),
+        (0, 8, 1),
+        (4, 0, 4),
+        (4, 4097, 4),
+        (6001, 8, 6001),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let bytes = if height == 0 || width == 0 {
+            let mut bytes = rgb_jpeg(8, 4);
+            let sof = bytes.windows(2).position(|v| v == [0xff, 0xc0]).unwrap();
+            bytes[sof + 5..sof + 7].copy_from_slice(&height.to_be_bytes());
+            bytes[sof + 7..sof + 9].copy_from_slice(&width.to_be_bytes());
+            bytes
+        } else {
+            rgb_jpeg(width, height)
+        };
+        let capture = page_capture(directory.path(), &bytes, lines, Source::Platen);
+        let pdf = directory.path().join("document.pdf");
+        assert!(
+            matches!(assemble_pdf(&capture, &pdf), Err(Error::Protocol(_))),
+            "height={height}, width={width}, lines={lines}"
+        );
+        assert!(!pdf.exists());
+    }
+}
+
+#[test]
+fn fill_markers() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut bytes = rgb_jpeg(8, 4);
+    bytes.splice(2..2, [0xff, 0xff]);
+    let sof = bytes.windows(2).position(|v| v == [0xff, 0xc0]).unwrap();
+    bytes.splice(sof..sof, [0xff, 0xff]);
+    let capture = page_capture(directory.path(), &bytes, 5, Source::Platen);
+    let pdf = directory.path().join("document.pdf");
+    assemble_pdf(&capture, &pdf).unwrap();
+
+    let image = pdf_image(&pdf);
+    assert_eq!(image.content, bytes);
+}
+
+#[test]
+fn decoded_buffer_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let jpeg = rgb_jpeg(4096, 3000);
+    let capture = page_capture(directory.path(), &jpeg, 3001, Source::Platen);
+    let pdf = directory.path().join("document.pdf");
+    assert!(matches!(
+        assemble_pdf(&capture, &pdf),
+        Err(Error::Protocol(_))
+    ));
+    assert!(!pdf.exists());
 }
 
 #[tokio::test]

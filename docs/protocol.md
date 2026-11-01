@@ -51,7 +51,9 @@ Page numbers start at one and increase after each page end. Image fragments belo
 
 ## Assemble a document
 
-The final image record's `lines` value gives the acquired page height. Feeder JPEG SOF headers can overstate that height. Validate the reported height against the header, replace only the SOF height, and decode the result before embedding the JPEG directly into a PDF at 300 dpi. The compressed samples and width padding remain intact. The printer can emit three-component JPEGs despite the GRAY256 request; select DeviceGray or DeviceRGB from the actual decoded image metadata. Require bounded dimensions and an end-of-image marker.
+The final image record's `lines` value is a cumulative protocol counter. Feeder JPEG SOF headers can overstate the acquired height, so reduce the SOF height to the reported count in that case. Platen counters can report one line more than the encoded frame; retain the encoded height for that discrepancy and reject larger overruns. Apply image limits to the normalized height, then decode exactly one complete JPEG before embedding it directly into a PDF at 300 dpi. The compressed samples, marker padding, and width padding remain intact. The printer can emit three-component JPEGs despite the GRAY256 request; select DeviceGray or DeviceRGB from the actual decoded image metadata. Reject trailing images or data instead of silently discarding them.
+
+The output is limited to 4096 columns and 6000 normalized rows, with a 32 MiB decoder buffer limit. A counter of 6001 for an encoded 6000-row frame remains within the height limit; the counter does not add an image row.
 
 The library preserves complete raw pages and the current partial file on acquisition failure. The service durably publishes complete capture metadata before local PDF assembly. Assembly can repeat without a new printer connection. PDFs are eligible for upload only after validation and durable publication.
 
