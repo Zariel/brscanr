@@ -104,7 +104,11 @@ impl Store {
                 _ => "document.pdf",
             };
             if !self.directory(&job.id).join(file).is_file() {
-                let state = if ["submitted", "unknown"].contains(&job.state.as_str()) { job.state.as_str() } else { "failed" };
+                let state = if ["submitted", "unknown"].contains(&job.state.as_str()) {
+                    job.state.as_str()
+                } else {
+                    "failed"
+                };
                 self.transition(
                     &job.id,
                     state,
@@ -140,8 +144,10 @@ impl Store {
             .fetch_optional(&mut *tx)
             .await?
         {
-            if row.get::<String, _>("source") != source {
-                bail!("idempotency key was used for another source");
+            if key.starts_with("ui:") && row.get::<String, _>("source") != source {
+                return Ok(Admission::Rejected(
+                    "Idempotency key was used for another source".into(),
+                ));
             }
             let id: Option<String> = row.get("job_id");
             if let Some(id) = id {
