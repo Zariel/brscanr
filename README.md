@@ -36,16 +36,21 @@ The HTTP interface has no built-in authentication. Restrict it to a trusted netw
 
 ## Deploy in Kubernetes
 
-Build the service or a nonroot container image with Nix:
+Container images are published to `ghcr.io/zariel/brscanr` for Linux AMD64 and ARM64. `main` publishes the `main` image tag; Git tags publish their corresponding image tags. The runtime is distroless nonroot with one stripped, statically linked executable and the base image's certificate and identity data.
+
+Install the [Helm chart](charts/brscanr/README.md) from `oci://ghcr.io/zariel/charts/brscanr`. Published charts pin the image digest. `main` produces development chart versions; SemVer tags produce release versions.
+
+For a local build, use the Nix development shell for tooling:
 
 ```sh
 nix build
-nix build .#image
+nix develop
+docker buildx build --load --tag brscanr:local .
 ```
 
-The second command produces a Docker image archive at `result`. Load and push it with your container tooling, then configure the image reference in [`deploy/kubernetes/deployment.yaml`](deploy/kubernetes/deployment.yaml). No published image is assumed.
+`nix build` builds the native executable. The Dockerfile uses a separate dependency layer, so source changes reuse compiled dependencies. CI exports all BuildKit layers to an architecture-scoped cache and builds each architecture on a native runner.
 
-Follow the [deployment and recovery guide](docs/operations.md) to reserve a callback address, create the API-token Secret, configure the manifests, and verify routed button delivery. The deployment uses one replica, a dedicated PVC, normal pod networking, and a UDP LoadBalancer. It requires no host networking, Multus attachment, privileged container, or Kubernetes API permissions.
+Follow the [deployment and recovery guide](docs/operations.md) to reserve a callback address, create the API-token Secret, and verify routed button delivery. You can use Helm or the manifests in [`deploy/kubernetes`](deploy/kubernetes). Both use one replica, a dedicated PVC, normal pod networking, and a UDP LoadBalancer. They require no host networking, Multus attachment, privileged container, or Kubernetes API permissions.
 
 ## Trigger scans through HTTP
 
@@ -78,7 +83,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo build -p brscanr
 python tests/workflow.py
+python ci/check-chart.py
+actionlint
+hadolint Dockerfile
 kubectl kustomize deploy/kubernetes | kubeconform -strict -summary
 ```
 
-The workflow test uses loopback simulators and a temporary spool. It exercises the real service process and independently renders its PDF with Poppler. It does not contact a physical printer or a real Paperless instance. Physical image quality, cross-subnet callback delivery, and cluster failover require the checks in the deployment guide.
+The workflow test uses loopback simulators and a temporary spool. It exercises the real service process and independently renders its PDF with Poppler. To check a built container, run `BRSCANR_TEST_IMAGE=brscanr:local python ci/check-image.py`; this inspects its filesystem, starts it with a read-only root and persistent volume, and runs the full workflow against the executable extracted from that image. Neither test contacts a physical printer or a real Paperless instance. Physical image quality, cross-subnet callback delivery, and cluster failover require the checks in the deployment guide.

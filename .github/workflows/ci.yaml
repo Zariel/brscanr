@@ -1,0 +1,118 @@
+name: CI and publish
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            .cache/cargo
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('flake.lock', 'Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - name: Check Rust, container definition, and charts
+        run: |
+          nix develop -c bash -euo pipefail -c '
+            cargo fmt --all --check
+            cargo clippy --workspace --all-targets --locked -- -D warnings
+            cargo test --workspace --locked
+            cargo build -p brscanr --locked
+            python tests/workflow.py
+            actionlint
+            hadolint Dockerfile
+            python ci/check-chart.py
+          '
+
+  image:
+    needs: check
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    # Native builds avoid emulation; this workflow owns caches and manifest assembly.
+    uses: docker/github-builder/.github/workflows/build.yml@cbc9d42f8c89a55623392aadd03600965b80e963 # v1.18.1
+    with:
+      runner: |
+        default=ubuntu-24.04
+        linux/arm64=ubuntu-24.04-arm
+      output: image
+      platforms: linux/amd64,linux/arm64
+      push: ${{ github.event_name == 'push' }}
+      cache: true
+      cache-mode: max
+      cache-scope: brscanr
+      meta-images: ghcr.io/${{ github.repository }}
+      meta-flavor: latest=false
+      meta-tags: |
+        type=ref,event=branch
+        type=ref,event=tag
+        type=ref,event=pr
+      set-meta-labels: true
+      set-meta-annotations: true
+      sbom: true
+      sign: auto
+    secrets:
+      registry-auths: |
+        - registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+  verify-image:
+    needs: image
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
+      - name: Check the published image by digest
+        env:
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          export BRSCANR_TEST_IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}@${IMAGE_DIGEST}"
+          docker pull "$BRSCANR_TEST_IMAGE"
+          nix develop -c python ci/check-image.py
+
+  chart:
+    needs: [image, verify-image]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31
+      - name: Package and publish OCI chart with the exact image digest
+        env:
+          IMAGE_META_JSON: ${{ needs.image.outputs.meta-json }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          nix develop .#release -c bash ci/publish-chart.sh

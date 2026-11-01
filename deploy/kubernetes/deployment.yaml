@@ -22,15 +22,15 @@ spec:
       terminationGracePeriodSeconds: 30
       securityContext:
         runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
-        fsGroup: 10001
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: brscanr
-          image: registry.example.com/brscanr:0.1.0
+          image: ghcr.io/zariel/brscanr:main
           envFrom:
             - configMapRef:
                 name: brscanr

@@ -22,7 +22,9 @@ The optional [`network-policy.example.yaml`](../deploy/kubernetes/network-policy
 
 ## Install the service
 
-1. Build, load, and push the Nix image described in the README. Set a registry image reference, preferably a digest, in the Deployment.
+The [Helm chart](../charts/brscanr/README.md) provides an OCI installation with digest-pinned images and configurable storage, callbacks, and monitoring. For the plain Kubernetes manifests:
+
+1. Choose an image from `ghcr.io/zariel/brscanr`. Set a release tag or digest in the Deployment; the supplied `main` tag follows development builds.
 2. Edit `deploy/kubernetes/config.yaml`: printer IP, callback VIP, destination, Paperless URL, and button source. Update the callback Service annotation to match. Choose a PVC storage class that supports SQLite locking and durable file/directory synchronization. The default claim requests 10 GiB.
 3. Create the namespace and a Secret containing a file named `token`:
 
