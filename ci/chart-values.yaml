@@ -1,0 +1,9 @@
+scanner:
+  printerIP: 192.0.2.10
+callback:
+  address: 198.51.100.50
+  annotations:
+    lbipam.cilium.io/ips: 198.51.100.50
+paperless:
+  url: http://paperless.default.svc.cluster.local:8000/
+  existingSecret: brscanr-paperless

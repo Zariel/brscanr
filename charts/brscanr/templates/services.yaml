@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "brscanr.fullname" . }}
+  labels:
+    {{- include "brscanr.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "brscanr.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "brscanr.callbackName" . }}
+  labels:
+    {{- include "brscanr.labels" . | nindent 4 }}
+  {{- with .Values.callback.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: LoadBalancer
+  # Notification validation requires the original printer source address.
+  externalTrafficPolicy: Local
+  selector:
+    {{- include "brscanr.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: callback
+      port: {{ .Values.callback.port }}
+      targetPort: callback
+      protocol: UDP

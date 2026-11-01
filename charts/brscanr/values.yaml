@@ -1,0 +1,83 @@
+# Only one process may own a printer. Use 0 to stop it; values above 1 are rejected.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/zariel/brscanr
+  # Empty uses v followed by appVersion. Published OCI charts pin the image digest.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+scanner:
+  printerIP: ""
+  destination: Paperless
+  buttonSource: feeder
+  # Enable explicitly for a printer with a self-signed certificate.
+  insecureTLS: false
+
+callback:
+  # Required: a reserved IPv4 LoadBalancer address reachable from the printer.
+  address: ""
+  port: 54925
+  # For Cilium, set lbipam.cilium.io/ips to the same address.
+  annotations: {}
+
+paperless:
+  url: ""
+  # Supply an existing Secret; credentials are never rendered into a ConfigMap.
+  existingSecret: ""
+  tokenKey: token
+
+service:
+  port: 8080
+  annotations: {}
+
+persistence:
+  existingClaim: ""
+  # null uses the cluster default; "" requests a volume without a StorageClass.
+  storageClass: null
+  accessModes: [ReadWriteOnce]
+  size: 10Gi
+  # Retain unimported scans if the Helm release is uninstalled.
+  annotations:
+    helm.sh/resource-policy: keep
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 1Gi
+
+podAnnotations: {}
+# Optional native BRSCANR_* settings, including limits and retention. Do not
+# override the chart-managed bind addresses, spool path, or token-file settings.
+extraEnv: []
+envFrom: []
+nodeSelector: {}
+tolerations: []
+affinity: {}
+terminationGracePeriodSeconds: 30
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}

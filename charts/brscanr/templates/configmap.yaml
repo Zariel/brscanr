@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "brscanr.fullname" . }}
+  labels:
+    {{- include "brscanr.labels" . | nindent 4 }}
+data:
+  BRSCANR_PRINTER_IP: {{ required "Set scanner.printerIP" .Values.scanner.printerIP | quote }}
+  BRSCANR_CALLBACK: {{ printf "%s:%v" (required "Set callback.address" .Values.callback.address) .Values.callback.port | quote }}
+  BRSCANR_DESTINATION: {{ .Values.scanner.destination | quote }}
+  BRSCANR_BUTTON_SOURCE: {{ .Values.scanner.buttonSource | quote }}
+  BRSCANR_INSECURE_PRINTER_TLS: {{ .Values.scanner.insecureTLS | toString | quote }}
+  BRSCANR_PAPERLESS_URL: {{ required "Set paperless.url" .Values.paperless.url | quote }}
+  BRSCANR_SPOOL: /var/lib/brscanr
+  BRSCANR_LISTEN: 0.0.0.0:8080

@@ -1,0 +1,8 @@
+brscanr starts once the spool PVC and Paperless token Secret are available.
+
+Forward the HTTP service:
+  kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "brscanr.fullname" . }} 8080:{{ .Values.service.port }}
+
+Verify that service/{{ include "brscanr.callbackName" . }} receives the reserved address {{ .Values.callback.address }}.
+Registration acceptance does not prove printer-to-callback routing; test Scan to PC before cutover.
+Use one owner for this printer. Fence an isolated old instance before force-replacing its pod.
