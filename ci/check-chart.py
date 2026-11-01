@@ -77,12 +77,17 @@ def main():
 
     original = Path(CHART, "values.yaml").read_bytes()
     with tempfile.TemporaryDirectory() as temporary:
-        for ref, ref_type, expected in [("main", "branch", "0.1.0-main.12.1"),
+        for ref, ref_type, expected in [("main", "branch", None),
+                                         ("v1.2.3", "branch", None),
                                          ("v1.2.3", "tag", "1.2.3"),
+                                         ("1.2.3", "tag", "1.2.3"),
                                          ("v1.2.3-rc.1", "tag", "1.2.3-rc.1"),
+                                         ("v1.2.3+build.1", "tag", "1.2.3+build.1"),
+                                         ("v1.02.3", "tag", None),
+                                         ("v1.2.3-01", "tag", None),
                                          ("nightly", "tag", None)]:
             output = subprocess.check_output(["python", "ci/package-chart.py", "--ref", ref, "--ref-type", ref_type,
-                                              "--run-number", "12", "--image-ref", "ghcr.io/zariel/brscanr:main",
+                                              "--image-ref", "ghcr.io/zariel/brscanr:main",
                                               "--image-digest", "sha256:" + "a" * 64, "--destination", temporary], text=True)
             packaged = json.loads(output)
             if expected is None:

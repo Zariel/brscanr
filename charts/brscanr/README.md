@@ -34,7 +34,7 @@ The annotation selects a reserved address with Cilium. For another LoadBalancer 
 Inspect and install a chart version:
 
 ```sh
-helm show chart oci://ghcr.io/zariel/charts/brscanr --devel
+helm show chart oci://ghcr.io/zariel/charts/brscanr --version <chart-version>
 helm upgrade --install brscanr oci://ghcr.io/zariel/charts/brscanr \
   --namespace brscanr --version <chart-version> --values values.yaml
 kubectl -n brscanr port-forward service/brscanr 8080:8080
@@ -44,7 +44,7 @@ Open `http://localhost:8080` and check registration and real button delivery. Re
 
 ## Release versions
 
-`main` publishes development charts as `0.1.0-main.<run>.<attempt>` using the base version in `Chart.yaml`. Select them with `--devel` or an exact version. SemVer Git tags such as `v1.2.3` publish chart version `1.2.3`; prerelease and build metadata are supported. Non-SemVer Git tags publish the container only. All published charts pin the exact multi-platform image digest from the same workflow, including development charts.
+Charts are published only for SemVer Git tags: `v1.2.3` or `1.2.3` publishes chart version `1.2.3`. Prerelease tags and build metadata are supported. `main` and non-SemVer Git tags publish containers only. All published charts pin the exact multi-platform image digest from the same release workflow.
 
 ## Configure the deployment
 

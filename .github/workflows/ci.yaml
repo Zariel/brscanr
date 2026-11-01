@@ -99,7 +99,8 @@ jobs:
 
   chart:
     needs: [image, verify-image]
-    if: github.event_name == 'push'
+    # The packager validates SemVer before any registry login or chart push.
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     permissions:
       contents: read

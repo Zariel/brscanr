@@ -38,7 +38,7 @@ The HTTP interface has no built-in authentication. Restrict it to a trusted netw
 
 Container images are published to `ghcr.io/zariel/brscanr` for Linux AMD64 and ARM64. `main` publishes the `main` image tag; Git tags publish their corresponding image tags. The runtime is distroless nonroot with one stripped, statically linked executable and the base image's certificate and identity data.
 
-Install the [Helm chart](charts/brscanr/README.md) from `oci://ghcr.io/zariel/charts/brscanr`. Published charts pin the image digest. `main` produces development chart versions; SemVer tags produce release versions.
+Install the [Helm chart](charts/brscanr/README.md) from `oci://ghcr.io/zariel/charts/brscanr`. Charts are published only for SemVer Git tags and pin the exact image digest from that release.
 
 For a local build, use the Nix development shell for tooling:
 
