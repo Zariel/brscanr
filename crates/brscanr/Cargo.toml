@@ -21,6 +21,7 @@ sha2 = "0.10"
 fs2 = "0.4"
 tokio-util = { version = "0.7", features = ["io", "rt"] }
 url = "2"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tempfile.workspace = true

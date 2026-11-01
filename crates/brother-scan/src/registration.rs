@@ -105,3 +105,59 @@ async fn bounded_body(mut response: reqwest::Response) -> Result<Vec<u8>> {
     }
     Ok(data)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Json, Router, http::HeaderMap, routing::post};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[tokio::test]
+    async fn digest_renewals() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let received = Arc::clone(&count);
+        let router = Router::new().route("/phoenix/mib", post(move |headers: HeaderMap, Json(body): Json<serde_json::Value>| {
+            let received = Arc::clone(&received);
+            async move {
+                use axum::response::IntoResponse;
+                if !headers.contains_key(header::AUTHORIZATION) {
+                    return (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, "Digest realm=\"printer\", nonce=\"abc123\", qop=\"auth\", algorithm=MD5")]).into_response();
+                }
+                let auth = headers[header::AUTHORIZATION].to_str().unwrap();
+                assert!(auth.starts_with("Digest username=\"Public\""));
+                assert!(auth.contains("uri=\"/phoenix/mib\""));
+                let entries = body["request"].as_array().unwrap();
+                assert_eq!(entries.len(), 4);
+                for (entry, function) in entries.iter().zip(["IMAGE", "OCR", "EMAIL", "FILE"]) {
+                    assert_eq!(entry["key"], "1.3.6.1.4.1.2435.2.3.9.2.11.1.1.0");
+                    let value = entry["string_value"].as_str().unwrap();
+                    assert!(value.contains(&format!("USER=Office;FUNC={function};HOST=192.0.2.1:54925;")));
+                    assert!(value.ends_with("DURATION=360;BRID=;"));
+                }
+                received.fetch_add(1, Ordering::Relaxed);
+                Json(json!({"response": [{"status":0},{"status":0},{"status":0},{"status":0}]})).into_response()
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/phoenix/mib", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let mut registration = Registration::new(
+            "192.0.2.3".parse().unwrap(),
+            "192.0.2.1:54925".parse().unwrap(),
+            "Office".into(),
+            false,
+        )
+        .unwrap();
+        registration.url = url;
+        for _ in 0..20 {
+            registration.renew().await.unwrap();
+        }
+        assert_eq!(count.load(Ordering::Relaxed), 20);
+        server.abort();
+    }
+}

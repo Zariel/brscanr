@@ -187,9 +187,19 @@ impl Scanner {
 
     async fn read(&self, stream: &mut TcpStream, size: usize) -> Result<Vec<u8>> {
         let mut bytes = vec![0; size];
-        timeout(self.limits.idle_timeout, stream.read_exact(&mut bytes))
+        let mut received = 0;
+        while received < size {
+            let count = timeout(
+                self.limits.idle_timeout,
+                stream.read(&mut bytes[received..]),
+            )
             .await
             .map_err(|_| Error::Timeout)??;
+            if count == 0 {
+                return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+            }
+            received += count;
+        }
         Ok(bytes)
     }
 

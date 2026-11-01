@@ -9,7 +9,7 @@ mod document;
 mod notification;
 mod registration;
 
-pub use acquisition::{Capture, Limits, Scanner, Source};
+pub use acquisition::{Capture, Limits, Page, Scanner, Source};
 pub use document::assemble_pdf;
 pub use notification::Notification;
 pub use registration::Registration;
