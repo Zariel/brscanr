@@ -1,0 +1,27 @@
+[package]
+name = "brscanr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+brother-scan = { path = "../brother-scan" }
+anyhow.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+axum = { version = "0.8", features = ["form", "json"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+prometheus = { version = "0.14", features = ["process"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+fs2 = "0.4"
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+url = "2"
+
+[dev-dependencies]
+tempfile.workspace = true
+jpeg-encoder = "0.6"

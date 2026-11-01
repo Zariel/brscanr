@@ -1,0 +1,21 @@
+[package]
+name = "brother-scan"
+description = "Asynchronous native Brother Scan to PC registration and acquisition"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+thiserror = "2"
+digest_auth = "0.3"
+jpeg-decoder = "0.3"
+pdf-writer = "0.15"
+
+[dev-dependencies]
+tempfile.workspace = true
+jpeg-encoder = "0.6"
+lopdf = "0.39"
